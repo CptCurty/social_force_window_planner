@@ -30,11 +30,8 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include <visualization_msgs/msg/marker.hpp>
-#ifdef TF2_CPP_HEADERS
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-#else
-#include "tf2_geometry_msgs/tf2_geometry_msgs.h"
-#endif
+
 
 // sensor input for obstacles
 #include <sensor_msgs/msg/laser_scan.hpp>
@@ -154,127 +151,128 @@ struct InterfaceParams {
   std::string odom_topic_;
 };
 
-class SFMSensorInterface {
-public:
-  /**
-   * @brief  Default constructor
-   * @param parent pointer to a ros node handle to publish to topics
-   * @param tf Pointer to tf2 buffer
-   **/
-  SFMSensorInterface(const rclcpp_lifecycle::LifecycleNode::SharedPtr &parent,
-                     const std::shared_ptr<tf2_ros::Buffer> &tf,
-                     const std::string name);
+    class SFMSensorInterface {
+    public:
+    /**
+     * @brief  Default constructor
+     * @param parent pointer to a ros node handle to publish to topics
+     * @param tf Pointer to tf2 buffer
+     **/
+        SFMSensorInterface(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
+                            const std::shared_ptr<tf2_ros::Buffer> &tf,
+                            const std::string name);
 
-  /**
-   * @brief  Destructor class
-   */
-  ~SFMSensorInterface();
+        /**
+         * @brief  Destructor class
+         */
+        ~SFMSensorInterface();
 
-  /**
-   * @brief  Callback to process the laser scan sensory input.
-   * @param laser laserScan message to be processed
-   */
-  void laserCb(const sensor_msgs::msg::LaserScan::SharedPtr laser);
+        /**
+         * @brief  Callback to process the laser scan sensory input.
+         * @param laser laserScan message to be processed
+         */
+        void laserCb(const sensor_msgs::msg::LaserScan::SharedPtr laser);
 
-  /**
-   * @brief  Callback to process the people detected in the robot vecinity.
-   * @param people message with the people to be processed
-   */
-  void peopleCb(const people_msgs::msg::People::SharedPtr people);
+        /**
+         * @brief  Callback to process the people detected in the robot vecinity.
+         * @param people message with the people to be processed
+         */
+        void peopleCb(const people_msgs::msg::People::SharedPtr people);
 
-  /**
-   * @brief  Callback to process the odometry messages with the robot movement.
-   * @param odom messages with the obstacles to be processed.
-   */
-  void odomCb(const nav_msgs::msg::Odometry::SharedPtr odom);
+        /**
+         * @brief  Callback to process the odometry messages with the robot movement.
+         * @param odom messages with the obstacles to be processed.
+         */
+        void odomCb(const nav_msgs::msg::Odometry::SharedPtr odom);
 
-  /**
-   * @brief  Tranform a coordinate vector from one frame to another
-   * @param vector coordinate vector in the origin frame
-   * @param from string with the name of the origin frame
-   * @param to string with the name of the target frame
-   * @return coordinate vector in the target frame
-   */
-  geometry_msgs::msg::Vector3
-  transformVector(geometry_msgs::msg::Vector3 &vector,
-                  builtin_interfaces::msg::Time t, std::string from,
-                  std::string to);
+        /**
+         * @brief  Tranform a coordinate vector from one frame to another
+         * @param vector coordinate vector in the origin frame
+         * @param from string with the name of the origin frame
+         * @param to string with the name of the target frame
+         * @return coordinate vector in the target frame
+         */
+        geometry_msgs::msg::Vector3
+        transformVector(geometry_msgs::msg::Vector3 &vector,
+                        builtin_interfaces::msg::Time t, std::string from,
+                        std::string to);
 
-  /**
-   * @brief  returns the vector of sfm agents
-   * @return agents vector
-   */
-  std::vector<sfm::Agent> getAgents();
+        /**
+         * @brief  returns the vector of sfm agents
+         * @return agents vector
+         */
+        std::vector<sfm::Agent> getAgents();
+        void getOdom(nav_msgs::msg::Odometry &base_odom);
+        // void getRobotVel(geometry_msgs::msg::PoseStamped &robot_vel);
 
-  void getOdom(nav_msgs::msg::Odometry &base_odom);
-  // void getRobotVel(geometry_msgs::msg::PoseStamped &robot_vel);
+        void start() { running_ = true; };
+        void stop() { running_ = false; };
 
-  void start() { running_ = true; };
-  void stop() { running_ = false; };
+        private:
+        /**
+         * @brief  publish the transformed points in RViz
+         * @param points vector with the coordinates of the points
+         * @return none
+         */
+        void publish_obstacle_points(const std::vector<utils::Vector2d> &points);
 
-private:
-  /**
-   * @brief  publish the transformed points in RViz
-   * @param points vector with the coordinates of the points
-   * @return none
-   */
-  void publish_obstacle_points(const std::vector<utils::Vector2d> &points);
+        // void updateAgents();
 
-  // void updateAgents();
+        // rclcpp::Node *nh_; // Pointer to the node node handle
+        // rclcpp::Node::SharedPtr n_;
+        rclcpp_lifecycle::LifecycleNode::SharedPtr node_;
+        std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+        std::string name_;
+        // tf2_ros::Buffer *tf_buffer_; // Pointer to the tfBuffer created in the node
+        rclcpp_lifecycle::LifecycleNode::WeakPtr parent_;
+        rclcpp::Logger logger_{rclcpp::get_logger("SFMSensorInterface")};
 
-  // rclcpp::Node *nh_; // Pointer to the node node handle
-  // rclcpp::Node::SharedPtr n_;
-  rclcpp_lifecycle::LifecycleNode::SharedPtr node_;
-  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
-  std::string name_;
-  // tf2_ros::Buffer *tf_buffer_; // Pointer to the tfBuffer created in the node
+        InterfaceParams iface_params_;
 
-  InterfaceParams iface_params_;
+        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+        // message_filters does not support LifecycleNode
+        // message_filters::Subscriber<nav_msgs::msg::Odometry> odom_sub_;
+        // std::shared_ptr<tf2_ros::MessageFilter<nav_msgs::msg::Odometry>>
+        // filter_odom_;
+        std::mutex odom_mutex_;
+        nav_msgs::msg::Odometry base_odom_;
+        rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_sub_;
+        // message_filters::Subscriber<sensor_msgs::msg::LaserScan> laser_sub_;
+        // std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::LaserScan>>
+        //    filter_scan_;
+        rclcpp::Subscription<people_msgs::msg::People>::SharedPtr people_sub_;
+        // message_filters::Subscriber<people_msgs::msg::People> people_sub_;
+        // std::shared_ptr<tf2_ros::MessageFilter<people_msgs::msg::People>>
+        //    filter_people_;
+        // rclcpp::Subscription<dynamic_obstacle_detector::DynamicObstacles>::SharedPtr
+        //    dyn_obs_sub_;
+        rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr sonar_sub_;
+        std::shared_ptr<
+            rclcpp_lifecycle::LifecyclePublisher<visualization_msgs::msg::Marker>>
+            points_pub_;
+        // rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr points_pub_;
 
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
-  // message_filters does not support LifecycleNode
-  // message_filters::Subscriber<nav_msgs::msg::Odometry> odom_sub_;
-  // std::shared_ptr<tf2_ros::MessageFilter<nav_msgs::msg::Odometry>>
-  // filter_odom_;
-  std::mutex odom_mutex_;
-  nav_msgs::msg::Odometry base_odom_;
-  rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr laser_sub_;
-  // message_filters::Subscriber<sensor_msgs::msg::LaserScan> laser_sub_;
-  // std::shared_ptr<tf2_ros::MessageFilter<sensor_msgs::msg::LaserScan>>
-  //    filter_scan_;
-  rclcpp::Subscription<people_msgs::msg::People>::SharedPtr people_sub_;
-  // message_filters::Subscriber<people_msgs::msg::People> people_sub_;
-  // std::shared_ptr<tf2_ros::MessageFilter<people_msgs::msg::People>>
-  //    filter_people_;
-  // rclcpp::Subscription<dynamic_obstacle_detector::DynamicObstacles>::SharedPtr
-  //    dyn_obs_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::Range>::SharedPtr sonar_sub_;
-  std::shared_ptr<
-      rclcpp_lifecycle::LifecyclePublisher<visualization_msgs::msg::Marker>>
-      points_pub_;
-  // rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr points_pub_;
+        std::vector<sfm::Agent> agents_; // 0: robot, 1..: Others
+        // sfm::Agent robot_agent_;
+        std::mutex agents_mutex_;
+        std::vector<utils::Vector2d> obstacles_;
+        std::mutex obs_mutex_;
 
-  std::vector<sfm::Agent> agents_; // 0: robot, 1..: Others
-  // sfm::Agent robot_agent_;
-  std::mutex agents_mutex_;
-  std::vector<utils::Vector2d> obstacles_;
-  std::mutex obs_mutex_;
+        bool running_;
 
-  bool running_;
+        bool laser_received_;
+        bool odom_received_;
+        rclcpp::Time last_laser_;
+        // rclcpp::Time last_odom_;
 
-  bool laser_received_;
-  bool odom_received_;
-  rclcpp::Time last_laser_;
-  // rclcpp::Time last_odom_;
+        people_msgs::msg::People people_;
+        std::mutex people_mutex_;
+        // dynamic_obstacle_detector::DynamicObstacles dyn_obs_;
+        // std::mutex obs_mutex_;
 
-  people_msgs::msg::People people_;
-  std::mutex people_mutex_;
-  // dynamic_obstacle_detector::DynamicObstacles dyn_obs_;
-  // std::mutex obs_mutex_;
-
-  // bool use_static_map_;
-  // sfm::RosMap *static_map_;
-};
+        // bool use_static_map_;
+        // sfm::RosMap *static_map_;
+    };
 
 } // namespace social_force_window_planner
 

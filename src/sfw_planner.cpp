@@ -25,30 +25,35 @@ using namespace nav2_costmap_2d;
 
 namespace social_force_window_planner {
 
-SFWPlanner::SFWPlanner(const rclcpp_lifecycle::LifecycleNode::SharedPtr &parent,
+SFWPlanner::SFWPlanner(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
                        const std::string name,
                        std::shared_ptr<SFMSensorInterface> &sensor_iface,
                        const nav2_costmap_2d::Costmap2D &costmap,
                        std::vector<geometry_msgs::msg::Point> footprint_spec)
-    : node_(parent), name_(name), sensor_iface_(sensor_iface),
-      costmap_(costmap), footprint_spec_(footprint_spec) {
+    : parent_(parent),
+      name_(name),
+      sensor_iface_(sensor_iface),
+      costmap_(costmap),
+      footprint_spec_(footprint_spec) {
 
+  auto node = parent_.lock();
+
+  node_ = node;
+  logger_ = node_->get_logger();
   RCLCPP_INFO(node_->get_logger(), "SFWPlanner constructor!!!");
-  world_model_ = new CostmapModel(costmap);
+
+  world_model_ = new CostmapModel(costmap_);
 
   nav2_costmap_2d::calculateMinAndMaxDistances(
       footprint_spec, inscribed_radius_, circumscribed_radius_);
 
-  RCLCPP_INFO(node_->get_logger(), "\n\n\n---FOOTPRINT----");
-  RCLCPP_INFO(node_->get_logger(),
+  RCLCPP_INFO(logger_, "\n\n\n---FOOTPRINT----");
+  RCLCPP_INFO(logger_,
               "inscribed_radius: %.3f, circumscribed_radius: %.3f",
               inscribed_radius_, circumscribed_radius_);
-  RCLCPP_INFO(node_->get_logger(), "Footprint_specs:");
-  for (unsigned int i = 0; i < footprint_spec_.size(); i++) {
-    RCLCPP_INFO(node_->get_logger(), "point %u: x=%.3f, y=%.3f", (i + 1),
-                footprint_spec_[i].x, footprint_spec_[i].y);
-  }
-  RCLCPP_INFO(node_->get_logger(), "\n");
+  RCLCPP_INFO(logger_, "Footprint_specs:");
+
+  RCLCPP_INFO(logger_, "\n");
 
   // controller_freq_ = controller_freq;
   goal_reached_ = false;
@@ -60,29 +65,28 @@ SFWPlanner::SFWPlanner(const rclcpp_lifecycle::LifecycleNode::SharedPtr &parent,
 
   // read all the ros parameters
   params_.get(node_.get(), name_);
-
   // Initialize set of linear vels [0, max_vel_x_]
   int n_linvels = 4;
   double linvel_step = params_.max_vel_x_ / n_linvels;
-  RCLCPP_INFO(node_->get_logger(), "Set of linear vels: [");
+  RCLCPP_INFO(logger_, "Set of linear vels: [");
   for (int i = 0; i <= n_linvels; i++) {
     linvels_.push_back(i * linvel_step);
-    RCLCPP_INFO(node_->get_logger(), "%.2f, ", (i * linvel_step));
+    RCLCPP_INFO(logger_, "%.2f, ", (i * linvel_step));
   }
-  RCLCPP_INFO(node_->get_logger(), "]\n");
+  RCLCPP_INFO(logger_, "]\n");
   // Initialize set of angular vels [-max_vel_th, max_vel_th]
   int n_angvels = 4; // 3 vels for each direction
   double angvel_step = params_.max_vel_th_ / n_angvels;
-  RCLCPP_INFO(node_->get_logger(), "Set of angular vels: [");
+  RCLCPP_INFO(logger_, "Set of angular vels: [");
   angvels_.push_back(0.0);
-  RCLCPP_INFO(node_->get_logger(), "%.2f, ", 0.0);
+  RCLCPP_INFO(logger_, "%.2f, ", 0.0);
   for (int i = 1; i <= n_angvels; i++) {
     angvels_.push_back(i * angvel_step);
     angvels_.push_back(i * (-angvel_step));
-    RCLCPP_INFO(node_->get_logger(), "%.2f, ", (i * angvel_step));
-    RCLCPP_INFO(node_->get_logger(), "%.2f, ", (i * (-angvel_step)));
+    RCLCPP_INFO(logger_, "%.2f, ", (i * angvel_step));
+    RCLCPP_INFO(logger_, "%.2f, ", (i * (-angvel_step)));
   }
-  RCLCPP_INFO(node_->get_logger(), "]\n");
+  RCLCPP_INFO(logger_, "]\n");
   initializeMarkers();
 }
 
@@ -100,7 +104,7 @@ void SFWPlanner::initializeMarkers() {
       markers_.markers[counter].id = counter;
       markers_.markers[counter].type = 4;
       markers_.markers[counter].action = 0; // 0 - add/modify an object
-      markers_.markers[counter].lifetime = rclcpp::Duration(0.3);
+      markers_.markers[counter].lifetime = rclcpp::Duration::from_seconds(0.3);
       markers_.markers[counter].scale.x = 0.01;
       markers_.markers[counter].color.a = 1.0;
       markers_.markers[counter].pose.orientation.w = 1.0;
@@ -123,7 +127,6 @@ bool SFWPlanner::findBestAction(
   configuration_mutex_.lock();
 
   params_.get(node_.get(), name_);
-
   goal_reached_ = false;
   double vx, vy = 0.0, vt;
 
@@ -154,10 +157,10 @@ bool SFWPlanner::findBestAction(
   // Get the agent states
   // watch out! Agent[0] is the robot!
   std::vector<sfm::Agent> agents = sensor_iface_->getAgents();
-  // RCLCPP_INFO(node_->get_logger(), "FindBestAction. agents received: %i",
+  // RCLCPP_INFO(logger_, "FindBestAction. agents received: %i",
   //            (int)agents.size());
   // for (auto ag : agents) {
-  //   RCLCPP_INFO(node_->get_logger(),
+  //   RCLCPP_INFO(logger_,
   //               "ag %i, x: %.2f, y:%.2f, vx: %.2f, vy: %.2f", ag.id,
   //               ag.position.getX(), ag.position.getY(), ag.velocity.getX(),
   //               ag.velocity.getY());
@@ -169,20 +172,20 @@ bool SFWPlanner::findBestAction(
   // double dist_start =
   //    sqrt((rx - start_x_) * (rx - start_x_) + (ry - start_y_) * (ry -
   //    start_y_));
-  // RCLCPP_INFO(node_->get_logger(), "findBestAction. goal dist: %.2f",
+  // RCLCPP_INFO(logger_, "findBestAction. goal dist: %.2f",
   //            sqrt(dist_goal_sq));
 
   // If we are in the goal tolerance...
   if (dist_goal_sq <
       (params_.xy_goal_tolerance_ * params_.xy_goal_tolerance_)) {
-    RCLCPP_INFO(node_->get_logger(),
-                "findBestAction. Goal reached in distance...");
+    /* RCLCPP_FATAL(logger_,
+                "findBestAction. Goal reached in distance..."); */
     // Stop the robot
     vx = 0.0;
 
     // Goal reached
     if (fabs(goal_t_ - rt) < params_.yaw_goal_tolerance_) {
-      RCLCPP_INFO(node_->get_logger(), "GOAL REACHED!");
+      RCLCPP_INFO(logger_, "GOAL REACHED!");
       vt = 0.0;
       running_ = false;
       goal_reached_ = true;
@@ -195,7 +198,7 @@ bool SFWPlanner::findBestAction(
       else
         vt = -params_.min_in_place_vel_th_;
 
-      RCLCPP_INFO(node_->get_logger(),
+      RCLCPP_INFO(logger_,
                   "findBestAction. Rotating to reach the heading goal...");
       // If the robot's footprint is not a circunference,
       // we check that the rotation is valid
@@ -212,7 +215,7 @@ bool SFWPlanner::findBestAction(
           cmd_vel.angular.y = 0.0;
           cmd_vel.angular.z = vt;
           configuration_mutex_.unlock();
-          RCLCPP_INFO(node_->get_logger(),
+          RCLCPP_INFO(logger_,
                       "hdiff: %.2f, rotating lv:%.2f, av:%.2f", ang_diff, vx,
                       vt);
           return false;
@@ -275,11 +278,11 @@ bool SFWPlanner::findBestAction(
   double dy = -(wpx - rx) * sin(rt) + (wpy - ry) * cos(rt);
   double dt = atan2(dy, dx);
 
-  // RCLCPP_INFO(node_->get_logger(),
+  // RCLCPP_INFO(logger_,
   //            "findBestAction local goal x:%.2f, y:%.2f, h:%.2f", dx, dy, dt);
 
   // If we are approaching the goal (< dist_thres meters)
-  double dist_thres = 1.5;
+  double dist_thres = 0.2;
   if (dist_goal_sq < (dist_thres * dist_thres)) {
     vx = params_.min_vel_x_ + (params_.max_vel_x_ - params_.min_vel_x_) *
                                   (sqrt(dist_goal_sq) / dist_thres);
@@ -291,7 +294,7 @@ bool SFWPlanner::findBestAction(
     if (dt < 0.0)
       vt *= -1;
 
-    RCLCPP_INFO(node_->get_logger(),
+    RCLCPP_INFO(logger_,
                 "findBestAction. Approaching local goal x:%.2f, y:%.2f at "
                 "lv:%.2f, av: %.2f",
                 dx, dy, vx, vt);
@@ -326,7 +329,7 @@ bool SFWPlanner::findBestAction(
       return true;
     } else {
       RCLCPP_INFO(
-          node_->get_logger(),
+          logger_,
           "findBestAction. Approaching local goal at lv: %.2f, av: %.2f "
           "NOT VALID!",
           vx, vt);
@@ -356,7 +359,7 @@ bool SFWPlanner::findBestAction(
       double cost = scoreTrajectory(rx, ry, rt, rvx, rvy, rvt, linvel, 0.0,
                                     angvel, params_.max_trans_acc_, 0.0,
                                     params_.max_rot_acc_, wpx, wpy, agents, t);
-      // RCLCPP_INFO(node_->get_logger(), "cost: %.4f", cost);
+      // RCLCPP_INFO(logger_, "cost: %.4f", cost);
       // ros::Time tfc = ros::Time::now();
       // double t2 = (tfc - tic).toSec();
       // printf("%i - Scoring [%.2f, %.2f] cost: %.3f, time: %.2f ms\n", i,
@@ -384,9 +387,9 @@ bool SFWPlanner::findBestAction(
         markers_.markers[i].color.b = 1.0;
         markers_.markers[i].color.a = 0.6;
       }
-      // printf(
-      //    "findBestAction. Evaluated lvel: %.2f, avel: %.2f -- cost: %.4f\n ",
-      //    linvel, angvel, cost);
+     /*   RCLCPP_FATAL(logger_,
+          "findBestAction. Evaluated lvel: %.2f, avel: %.2f -- cost: %.4f\n ",
+          linvel, angvel, cost); */
       // if (cost >= 0.0 && cost <= second_traj.cost_ && cost > best_cost) {
       //  second_traj = t;
       //}
@@ -416,7 +419,7 @@ bool SFWPlanner::findBestAction(
     }
   }
 
-  // RCLCPP_INFO(node_->get_logger(),
+  // RCLCPP_INFO(logger_,
   //            "After scoring Trajectories. Best_traj.cost: %.3f",
   //            best_traj.cost_);
   // rclcpp::Time tf = node_->get_clock()->now();
@@ -432,6 +435,19 @@ bool SFWPlanner::findBestAction(
       vy = 0.0;
       vt = second_traj.thetav_;
     }*/
+    double x, y, th;
+    best_traj.getEndpoint(x, y, th);
+
+    local_plan_.clear();
+    geometry_msgs::msg::PoseStamped pose;
+    pose.pose.position.x = x;
+    pose.pose.position.y = y;
+    pose.pose.position.z = 0.0;
+    pose.pose.orientation.w = 0.0;
+    pose.pose.orientation.x = 0.0;
+    pose.pose.orientation.y = 0.0;
+    pose.pose.orientation.z = th;
+    local_plan_.push_back(pose);
     for (unsigned int a = 0; a < markers_.markers[best_i].points.size(); a++) {
       markers_.markers[best_i].points[a].z = 0.1;
     }
@@ -447,7 +463,7 @@ bool SFWPlanner::findBestAction(
     cmd_vel.angular.y = 0.0;
     cmd_vel.angular.z = vt;
 
-    RCLCPP_INFO(node_->get_logger(),
+    RCLCPP_INFO(logger_,
                 "BEST TRAJ FOUND -- lvel: %.2f, avel: %.2f, cost: %.3f\n", vx,
                 vt, best_traj.cost_);
 
@@ -462,7 +478,7 @@ bool SFWPlanner::findBestAction(
     cmd_vel.angular.y = 0.0;
     cmd_vel.angular.z = 0.0;
     configuration_mutex_.unlock();
-    RCLCPP_INFO(node_->get_logger(),
+    RCLCPP_INFO(logger_,
                 "Best trajectory cost = -1! sending 0 vel\n");
     return false;
   }
@@ -484,10 +500,10 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
 
   // ros::Time one = ros::Time::now();
   std::vector<sfm::Agent> myagents = agents;
-  // RCLCPP_INFO(node_->get_logger(), "scoreTraj. agents received: %i",
+  // RCLCPP_INFO(logger_, "scoreTraj. agents received: %i",
   //             (int)myagents.size());
   // for (auto ag : myagents) {
-  //   RCLCPP_INFO(node_->get_logger(), "ag %i, x: %.2f, y:%.2f, vx: %.2f",
+  //   RCLCPP_INFO(logger_, "ag %i, x: %.2f, y:%.2f, vx: %.2f",
   //   ag.id,
   //               ag.position.getX(), ag.position.getY(), ag.linearVelocity);
   // }
@@ -544,7 +560,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
     // we don't want a path that goes off the know map
     if (!costmap_.worldToMap(x_i, y_i, cell_x, cell_y)) {
       traj.cost_ = -1.0;
-      RCLCPP_INFO(node_->get_logger(),
+      RCLCPP_INFO(logger_,
                   "scoreTrajectory. Returning because going off the map!\n");
       return -1.0;
     }
@@ -554,7 +570,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
 
     if (footprint_cost >= 254.0) {
       traj.cost_ = -1.0;
-      RCLCPP_INFO(node_->get_logger(),
+      RCLCPP_INFO(logger_,
                   "scoreTrajectory. Returning because footprint cost invalid: "
                   "%.2f!!!\n",
                   footprint_cost);
@@ -565,7 +581,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
     if (footprint_cost < 0) // -1, -2 or -3
     {
       traj.cost_ = -1.0;
-      RCLCPP_INFO(node_->get_logger(),
+      RCLCPP_INFO(logger_,
                   "scoreTrajectory. Returning because footprint cost invalid: "
                   "%.2f!!!\n\n",
                   footprint_cost);
@@ -616,7 +632,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
       double d = dx * dx + dy * dy; // hypotf(dx, dy);
       if (d <= (params_.robot_radius_ * params_.robot_radius_)) {
         RCLCPP_INFO(
-            node_->get_logger(),
+            logger_,
             "scoreTrajectory. Returning because possible collision with "
             "dynamic obstacle, d: "
             "%.2f!!!\n",
@@ -625,7 +641,6 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
         return -1.0;
       }
     }
-
     social_work += computeSocialWork(myagents);
     // traj.cost_ += computeCost(myagents);
 
@@ -654,7 +669,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
   double vel_diff = fabs(params_.max_vel_x_ - vx_i) / params_.max_vel_x_;
   // average costmap cost
   costmap_cost = costmap_cost / num_steps;
-
+  
   // printf("costmap_cost: %.2f\n", costmap_cost);
 
   // DWA cost function:
@@ -665,7 +680,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
                 (params_.angle_weight_ * ang_diff) +
                 (params_.costmap_weight_ * costmap_cost) +
                 (params_.social_weight_ * social_work);
-  // RCLCPP_INFO(node_->get_logger(),
+  // RCLCPP_INFO(logger_,
   //             "-Scoring lv: %.2f, av: %.2f, d: %.3f, sw: %.3f, hdiff: %.3f, "
   //             "vdiff: %.3f, ccost: %.3f "
   //             "FCost: %.4f",
@@ -752,7 +767,7 @@ bool SFWPlanner::mayIStop(double vl_x, double vl_y, double va, double x,
     steps++;
 
     if (footprint_cost < 0 || footprint_cost >= 254.0) {
-      RCLCPP_INFO(node_->get_logger(), "MayIStop. COLLISION steps: %i\n",
+      RCLCPP_INFO(logger_, "MayIStop. COLLISION steps: %i\n",
                   steps);
       return false;
     }
@@ -854,7 +869,7 @@ bool SFWPlanner::updatePlan(
     const vector<geometry_msgs::msg::PoseStamped> &new_plan) {
   goal_reached_ = false;
 
-  // RCLCPP_WARN(node_->get_logger(), "SFWPlanner. Updating plan!");
+  // RCLCPP_WARN(logger_, "SFWPlanner. Updating plan!");
   // Copy new plan
   global_plan_.clear();
   global_plan_.resize(new_plan.size());
@@ -866,7 +881,7 @@ bool SFWPlanner::updatePlan(
   if (global_plan_.size() == 0) {
     running_ = false;
     wp_index_ = -1;
-    RCLCPP_WARN(node_->get_logger(), "New local plan size = 0!");
+    RCLCPP_WARN(logger_, "New local plan size = 0!");
     return true;
   }
 
@@ -889,6 +904,20 @@ bool SFWPlanner::updatePlan(
   start_t_ = tf2::getYaw(start_pose.pose.orientation);
 
   return true;
+}
+nav_msgs::msg::Path SFWPlanner::getTrajectoryEndPoint() {
+  nav_msgs::msg::Path path;
+  geometry_msgs::msg::PoseStamped pose;
+  path.header.stamp = node_->get_clock()->now();
+  path.header.frame_id = global_plan_[0].header.frame_id;
+  pose.header.stamp = node_->get_clock()->now();
+  pose.header.frame_id = global_plan_[0].header.frame_id;
+  pose.pose.position.x = local_plan_[0].pose.position.x;
+  pose.pose.position.y = local_plan_[0].pose.position.y;
+  pose.pose.position.z = 0.0;
+  pose.pose.orientation = local_plan_[0].pose.orientation;
+  path.poses.push_back(pose);
+  return path;
 }
 
 bool SFWPlanner::isGoalReached() {

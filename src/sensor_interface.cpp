@@ -160,8 +160,9 @@ void SFMSensorInterface::laserCb(
       in.point.y = points[i].getY();
       in.point.z = 0.0;
       try {
+        tf2::Duration tf_tolerance = tf2::durationFromSec(0.1);
         geometry_msgs::msg::PointStamped out =
-            tf_buffer_->transform(in, iface_params_.controller_frame_);
+            tf_buffer_->transform(in, iface_params_.controller_frame_,tf_tolerance);
         points[i].setX(out.point.x);
         points[i].setY(out.point.y);
 
@@ -198,8 +199,10 @@ void SFMSensorInterface::laserCb(
       person_point.header.stamp = t; // node_->get_clock()->now();
 
       try {
+        tf2::Duration tf_tolerance = tf2::durationFromSec(0.1);
+
         geometry_msgs::msg::PointStamped p_point = tf_buffer_->transform(
-            person_point, iface_params_.controller_frame_);
+            person_point, iface_params_.controller_frame_, tf_tolerance);
         people_points.push_back(p_point.point);
       } catch (tf2::TransformException &ex) {
         RCLCPP_WARN(logger_,
@@ -464,17 +467,22 @@ void SFMSensorInterface::peopleCb(
     tf2::Quaternion quat;
     quat.setRPY(0, 0, people->people[i].position.z);
     ps.pose.orientation = tf2::toMsg(quat);
+
+ 
     if (people->header.frame_id != iface_params_.controller_frame_) {
+
       geometry_msgs::msg::PoseStamped p;
       try {
-      p = tf_buffer_->transform(ps, iface_params_.controller_frame_);
+      tf2::Duration tf_tolerance = tf2::durationFromSec(0.1);
+
+      p = tf_buffer_->transform(ps, iface_params_.controller_frame_, tf_tolerance);
       ps = p;
       } catch (tf2::TransformException &ex) {
       RCLCPP_WARN(logger_, "PeopleCallback. No transform %s", ex.what());
       return;
       }
     }
-    ag.position.set(ps.pose.position.x, ps.pose.position.y);
+    ag.position.set(ps.pose.position.x, ps.pose.position.y); 
 
     geometry_msgs::msg::Vector3 velocity;
     velocity.x = people->people[i].velocity.x;
@@ -510,11 +518,12 @@ void SFMSensorInterface::peopleCb(
     ag.desiredVelocity = iface_params_.people_velocity_;
     agents.push_back(ag);
 
-    /* RCLCPP_INFO(logger_,
+     /* RCLCPP_ERROR(logger_,
           "\tsfm::agent--id: %i, x: %.2f, y:%.2f, vx: %.2f, vy: %.2f, vz: %.2f",
           ag.id, ag.position.getX(), ag.position.getY(),
           ag.velocity.getX(), ag.velocity.getY(), ag.angularVelocity);
-  } */
+           */
+  } 
 
   // Fill the obstacles of the agents
   obs_mutex_.lock();
@@ -659,7 +668,8 @@ SFMSensorInterface::transformVector(geometry_msgs::msg::Vector3 &vector,
   v.vector.z = 0.0;
 
   try {
-    nv = tf_buffer_->transform(v, to);
+    tf2::Duration tf_tolerance = tf2::durationFromSec(0.1);
+    nv = tf_buffer_->transform(v, to, tf_tolerance);
   } catch (tf2::TransformException &ex) {
     RCLCPP_WARN(
         logger_,

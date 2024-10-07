@@ -56,7 +56,7 @@ namespace social_force_window_planner {
 
 struct InterfaceParams {
   InterfaceParams()
-      : max_robot_vel_x_(0.7), robot_radius_(0.35), person_radius_(0.35),
+      : max_robot_vel_x_(0.7),max_robot_vel_y_(0.7), robot_radius_(0.35), person_radius_(0.35),
         robot_frame_("base_link"), controller_frame_("odom"),
         max_obstacle_dist_(3.0), naive_goal_time_(2.0), people_velocity_(1.0),
         laser_topic_("scan"), people_topic_("people"), odom_topic_("odom") {}
@@ -72,9 +72,14 @@ struct InterfaceParams {
                      "SENSOR INTERFACE reading params of CONTROLLER: %s ",
                      name.c_str());
 
-    nav2_util::declare_parameter_if_not_declared(node, name + ".max_trans_vel",
+    nav2_util::declare_parameter_if_not_declared(node, name + ".max_trans_vel_x",
                                                  rclcpp::ParameterValue(0.7));
-    node->get_parameter(name + ".max_trans_vel", max_robot_vel_x_);
+    node->get_parameter(name + ".max_trans_vel_x", max_robot_vel_x_);
+    
+    nav2_util::declare_parameter_if_not_declared(node, name + ".max_trans_vel_y",
+                                                 rclcpp::ParameterValue(0.7));
+    node->get_parameter(name + ".max_trans_vel_y", max_robot_vel_y_);
+    
 
     nav2_util::declare_parameter_if_not_declared(node, name + ".robot_radius",
                                                  rclcpp::ParameterValue(0.35));
@@ -139,6 +144,7 @@ struct InterfaceParams {
     //           << std::endl;
   }
   float max_robot_vel_x_;
+  float max_robot_vel_y_;
   float robot_radius_;
   float person_radius_;
   std::string robot_frame_;

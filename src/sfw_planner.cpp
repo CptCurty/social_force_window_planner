@@ -65,15 +65,44 @@ SFWPlanner::SFWPlanner(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
 
   // read all the ros parameters
   params_.get(node_.get(), name_);
-  // Initialize set of linear vels [0, max_vel_x_]
-  int n_linvels = 4;
-  double linvel_step = params_.max_vel_x_ / n_linvels;
+  // Initialize set of linear vels [min_vel_x, max_vel_x_]
+  int n_linvels_x = 5;
+  double linvex;
+  double linvel_x_step = (params_.max_vel_x_- params_.min_vel_x_) / n_linvels_x;
   RCLCPP_INFO(logger_, "Set of linear vels: [");
-  for (int i = 0; i <= n_linvels; i++) {
-    linvels_.push_back(i * linvel_step);
-    RCLCPP_INFO(logger_, "%.2f, ", (i * linvel_step));
+  for (int i = 0; i <= n_linvels_x; i++) {
+    linvex = params_.min_vel_x_ + i * linvel_x_step;
+    linvels_x_.push_back(linvex);
+    RCLCPP_INFO(logger_, "%.2f, ", linvex);
+    RCLCPP_INFO(logger_, "%.2f, ", (i * linvel_x_step));
   }
   RCLCPP_INFO(logger_, "]\n");
+
+  if (params_.drivetype_ == "omnidirectional")
+  {
+  // Initialize set of linear vels [min_vel_y, max_vel_y_]
+  int n_linvels_y = 10;
+  double linvey;
+  double linvel_y_step = (params_.max_vel_y_- params_.min_vel_y_) / n_linvels_y;
+  RCLCPP_INFO(logger_, "Set of linear vels: [");
+  for (int i = 0; i <= n_linvels_y; i++) {
+    linvey = params_.min_vel_y_ + i * linvel_y_step;
+    linvels_y_.push_back(linvey);
+    RCLCPP_INFO(logger_, "%.2f, ", linvex);
+    RCLCPP_INFO(logger_, "%.2f, ", (i * linvel_y_step));
+  }
+  RCLCPP_INFO(logger_, "]\n");
+  }
+  else if (params_.drivetype_ == "differential")
+  {
+    linvels_y_.push_back(0.0);
+  }
+  else {
+    RCLCPP_ERROR(logger_, "SFWPlanner. Unknown drivetype: %s",
+                 params_.drivetype_.c_str());
+  }
+
+
   // Initialize set of angular vels [-max_vel_th, max_vel_th]
   int n_angvels = 4; // 3 vels for each direction
   double angvel_step = params_.max_vel_th_ / n_angvels;
@@ -88,16 +117,17 @@ SFWPlanner::SFWPlanner(const rclcpp_lifecycle::LifecycleNode::WeakPtr &parent,
   }
   RCLCPP_INFO(logger_, "]\n");
   initializeMarkers();
-}
+  }
 
 SFWPlanner::~SFWPlanner() {}
 
 void SFWPlanner::initializeMarkers() {
-  markers_.markers.resize(angvels_.size() * linvels_.size());
+  markers_.markers.resize(angvels_.size() * linvels_x_.size() * linvels_y_.size());
   unsigned counter = 0;
-  for (unsigned i = 0; i < linvels_.size(); i++) {
+  for (unsigned i = 0; i < linvels_x_.size(); i++) {
+    for (unsigned k = 0; k < linvels_y_.size(); k++) {
     for (unsigned j = 0; j < angvels_.size(); j++) {
-      // if (linvels_[i] == 0.0 && angvels_[i] == 0.0)
+      // if (linvels_x_[i] == 0.0 && angvels_[i] == 0.0)
       //  continue;
       markers_.markers[counter].header.frame_id = params_.controller_frame_;
       markers_.markers[counter].ns = "trajectories";
@@ -109,6 +139,7 @@ void SFWPlanner::initializeMarkers() {
       markers_.markers[counter].color.a = 1.0;
       markers_.markers[counter].pose.orientation.w = 1.0;
       counter++;
+    }
     }
   }
 }
@@ -128,14 +159,15 @@ bool SFWPlanner::findBestAction(
 
   params_.get(node_.get(), name_);
   goal_reached_ = false;
-  double vx, vy = 0.0, vt;
+  double vx = 0.0, vy = 0.0, vt =0.0;
 
   // Check we have a path and we are running
   if (!running_) {
     vx = 0.0;
+    vy = 0.0;
     vt = 0.0;
     cmd_vel.linear.x = vx;
-    cmd_vel.linear.y = 0.0;
+    cmd_vel.linear.y = vy;
     cmd_vel.linear.z = 0.0;
     cmd_vel.angular.x = 0.0;
     cmd_vel.angular.y = 0.0;
@@ -182,6 +214,7 @@ bool SFWPlanner::findBestAction(
                 "findBestAction. Goal reached in distance..."); */
     // Stop the robot
     vx = 0.0;
+    vy = 0.0;
 
     // Goal reached
     if (fabs(goal_t_ - rt) < params_.yaw_goal_tolerance_) {
@@ -205,7 +238,7 @@ bool SFWPlanner::findBestAction(
       if (!params_.is_circular_) {
         Trajectory t;
         if (scoreTrajectory(rx, ry, rt, rvx, rvy, rvt, vx, vy, vt,
-                            params_.max_trans_acc_, 0.0, params_.max_rot_acc_,
+                            params_.max_trans_acc_, params_.max_trans_acc_, params_.max_rot_acc_,
                             0.0, 0.0, agents, t) < 0.0) {
           // We can not rotate without collision
           cmd_vel.linear.x = vx;
@@ -286,7 +319,8 @@ bool SFWPlanner::findBestAction(
   if (dist_goal_sq < (dist_thres * dist_thres)) {
     vx = params_.min_vel_x_ + (params_.max_vel_x_ - params_.min_vel_x_) *
                                   (sqrt(dist_goal_sq) / dist_thres);
-    vy = 0.0;
+    vy = params_.min_vel_y_ + (params_.max_vel_y_ - params_.min_vel_y_) *
+                                  (sqrt(dist_goal_sq) / dist_thres);
     // vt = params_.min_vel_th_ + (params_.max_vel_th_ -
     // params_.min_vel_th_)*sqrt(dist_goal_sq) / dist_thres;
     vt = params_.min_vel_th_ +
@@ -300,7 +334,7 @@ bool SFWPlanner::findBestAction(
                 dx, dy, vx, vt);
     Trajectory t;
     if (scoreTrajectory(rx, ry, rt, rvx, rvy, rvt, vx, vy, vt,
-                        params_.max_trans_acc_, 0.0, params_.max_rot_acc_, wpx,
+                        params_.max_trans_acc_,params_.max_trans_acc_, params_.max_rot_acc_, wpx,
                         wpy, agents, t) != -1) {
       cmd_vel.linear.x = vx;
       cmd_vel.linear.y = vy;
@@ -345,19 +379,21 @@ bool SFWPlanner::findBestAction(
   int i = 0;
   int best_i = 0;
   double best_cost = 10000.0;
-  for (double linvel : linvels_) {
+  for (double linvel_x : linvels_x_) {
+    for (double linvel_y : linvels_y_) {
     for (double angvel : angvels_) {
       markers_.markers[i].header.stamp = node_->get_clock()->now();
       markers_.markers[i].points.clear();
-      if (linvel == 0.0 && angvel == 0.0) {
+      if (linvel_x == 0.0 && linvel_y == 0.0 && angvel == 0.0) {
         i++;
         continue;
       }
 
+
       Trajectory t;
       // ros::Time tic = ros::Time::now();
-      double cost = scoreTrajectory(rx, ry, rt, rvx, rvy, rvt, linvel, 0.0,
-                                    angvel, params_.max_trans_acc_, 0.0,
+      double cost = scoreTrajectory(rx, ry, rt, rvx, rvy, rvt, linvel_x, linvel_y,
+                                    angvel, params_.max_trans_acc_,  params_.max_trans_acc_,
                                     params_.max_rot_acc_, wpx, wpy, agents, t);
       // RCLCPP_INFO(logger_, "cost: %.4f", cost);
       // ros::Time tfc = ros::Time::now();
@@ -387,9 +423,9 @@ bool SFWPlanner::findBestAction(
         markers_.markers[i].color.b = 1.0;
         markers_.markers[i].color.a = 0.6;
       }
-     /*   RCLCPP_FATAL(logger_,
+/*         RCLCPP_FATAL(logger_,
           "findBestAction. Evaluated lvel: %.2f, avel: %.2f -- cost: %.4f\n ",
-          linvel, angvel, cost); */
+          linvel, angvel, cost);  */
       // if (cost >= 0.0 && cost <= second_traj.cost_ && cost > best_cost) {
       //  second_traj = t;
       //}
@@ -397,13 +433,13 @@ bool SFWPlanner::findBestAction(
       if (cost >= 0.0 && cost <= best_cost) {
 
         // prefer higher linear vel for equal-cost trajectories
-        if (cost == best_cost && linvel < best_traj.xv_) {
-
+        if (cost == best_cost && linvel_x < best_traj.xv_) {
+          
           i++;
           continue;
         }
         // prefer low angular vels for equal-cost trajectories
-        if (cost == best_cost && linvel == best_traj.xv_ &&
+        if (cost == best_cost && linvel_x == best_traj.xv_ &&
             fabs(angvel) > fabs(best_traj.thetav_)) {
           i++;
           continue;
@@ -411,12 +447,13 @@ bool SFWPlanner::findBestAction(
         best_traj = t;
         best_cost = cost;
         best_i = i;
-        vx = linvel;
-        vy = 0.0;
+        vx = linvel_x;
+        vy = linvel_y;
         vt = angvel;
       }
       i++;
     }
+  }
   }
 
   // RCLCPP_INFO(logger_,
@@ -463,9 +500,9 @@ bool SFWPlanner::findBestAction(
     cmd_vel.angular.y = 0.0;
     cmd_vel.angular.z = vt;
 
-    RCLCPP_INFO(logger_,
-                "BEST TRAJ FOUND -- lvel: %.2f, avel: %.2f, cost: %.3f\n", vx,
-                vt, best_traj.cost_);
+    /* RCLCPP_ERROR(logger_,
+                "BEST TRAJ FOUND -- lvel: %.2f, avel: %.2f,social_work cost: %.3f\n", vx,
+                vt, best_traj.cost_); */
 
     configuration_mutex_.unlock();
     return true;
@@ -605,6 +642,7 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
 
     // ros::Time t1 = ros::Time::now();
     // Compute Social Forces
+ 
     sfm::SFM.computeForces(myagents);
     // update agents
     sfm::SFM.updatePosition(myagents, dt);
@@ -641,7 +679,10 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
         return -1.0;
       }
     }
+    // Add if statement if velocity of robot is 0 then there is no social work
     social_work += computeSocialWork(myagents);
+    
+
     // traj.cost_ += computeCost(myagents);
 
     // increment time
@@ -680,12 +721,12 @@ double SFWPlanner::scoreTrajectory(double x, double y, double theta, double vx,
                 (params_.angle_weight_ * ang_diff) +
                 (params_.costmap_weight_ * costmap_cost) +
                 (params_.social_weight_ * social_work);
-  // RCLCPP_INFO(logger_,
-  //             "-Scoring lv: %.2f, av: %.2f, d: %.3f, sw: %.3f, hdiff: %.3f, "
-  //             "vdiff: %.3f, ccost: %.3f "
-  //             "FCost: %.4f",
-  //             vx_samp, vtheta_samp, std::sqrt(d), social_work, ang_diff,
-  //             vel_diff, costmap_cost, cost);
+     /* RCLCPP_FATAL(logger_,
+               "-Scoring lv: %.2f, av: %.2f, d: %.3f, sw: %.3f, hdiff: %.3f, "
+               "vdiff: %.3f, ccost: %.3f "
+               "FCost: %.4f ag.id: %i\n",
+               vx_samp, vtheta_samp, std::sqrt(d), social_work, ang_diff,
+               vel_diff, costmap_cost, cost, myagents[0].id);   */
   traj.cost_ = cost;
   return traj.cost_;
 }

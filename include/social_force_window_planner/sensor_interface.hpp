@@ -59,7 +59,11 @@ struct InterfaceParams {
       : max_robot_vel_x_(0.7),max_robot_vel_y_(0.7), robot_radius_(0.35), person_radius_(0.35),
         robot_frame_("base_link"), controller_frame_("odom"),
         max_obstacle_dist_(3.0), naive_goal_time_(2.0), people_velocity_(1.0),
-        laser_topic_("scan"), people_topic_("people"), odom_topic_("odom") {}
+        laser_topic_("scan"), people_topic_("people"), odom_topic_("odom"), forceFactorDesired(2.0), forceFactorObstacle(10.0),
+        forceSigmaObstacle(0.2), forceFactorSocial(2.1),
+        forceFactorGroupGaze(3.0), forceFactorGroupCoherence(2.0),
+        forceFactorGroupRepulsion(1.0), lambda(2.0), gamma(0.35), n(2.0),
+        nPrime(3.0), relaxationTime(0.5) {}
 
   /**
    * @brief Get params from ROS parameter
@@ -125,13 +129,74 @@ struct InterfaceParams {
         node, localdomain + ".odom_topic", rclcpp::ParameterValue("odom"));
     node->get_parameter(localdomain + ".odom_topic", odom_topic_);
 
+    // Social Force Model parameters
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceFactorDesired", rclcpp::ParameterValue(2.0));
+    node->get_parameter(name + ".forceFactorDesired", forceFactorDesired);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceFactorObstacle", rclcpp::ParameterValue(10.0));
+    node->get_parameter(name + ".forceFactorObstacle", forceFactorObstacle);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceSigmaObstacle", rclcpp::ParameterValue(0.2));
+    node->get_parameter(name + ".forceSigmaObstacle", forceSigmaObstacle);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceFactorSocial", rclcpp::ParameterValue(2.1));
+    node->get_parameter(name + ".forceFactorSocial", forceFactorSocial);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceFactorGroupGaze", rclcpp::ParameterValue(3.0));
+    node->get_parameter(name + ".forceFactorGroupGaze", forceFactorGroupGaze);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceFactorGroupCoherence", rclcpp::ParameterValue(2.0));
+    node->get_parameter(name + ".forceFactorGroupCoherence", forceFactorGroupCoherence);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".forceFactorGroupRepulsion", rclcpp::ParameterValue(1.0));
+    node->get_parameter(name + ".forceFactorGroupRepulsion", forceFactorGroupRepulsion);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".lambda", rclcpp::ParameterValue(2.0));
+    node->get_parameter(name + ".lambda", lambda);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".gamma", rclcpp::ParameterValue(0.35));
+    node->get_parameter(name + ".gamma", gamma);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".n", rclcpp::ParameterValue(2.0));
+    node->get_parameter(name + ".n", n);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".nPrime", rclcpp::ParameterValue(3.0));
+    node->get_parameter(name + ".nPrime", nPrime);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".relaxationTime", rclcpp::ParameterValue(0.5));
+    node->get_parameter(name + ".relaxationTime", relaxationTime);
+
+    nav2_util::declare_parameter_if_not_declared(
+        node, name + ".epsilon", rclcpp::ParameterValue(0.005));
+    node->get_parameter(name + ".epsilon", relaxationTime);
+
     RCLCPP_INFO_ONCE(node->get_logger(),
                      "\nSFM SENSOR INTERFACE:\nlaser_topic: %s\npeople_topic: "
                      "%s\nodom_topic: %s\nmax_obstacle_dist: "
-                     "%.3f\nnaive_goal_time: %.2f\npeople_velocity: %.2f\n",
+                     "%.3f\nnaive_goal_time: %.2f\npeople_velocity: %.2f\n" 
+                     "forceFactorDesired: %.2f\nforceFactorObstacle: %.2f\n"
+                     "forceSigmaObstacle: %.2f\nforceFactorSocial: %.2f\n"
+                     "forceFactorGroupGaze: %.2f\nforceFactorGroupCoherence: %.2f\n"
+                     "forceFactorGroupRepulsion: %.2f\nlambda: %.2f\ngamma: %.2f\n"
+                     "n: %.2f\nnPrime: %.2f\nrelaxationTime: %.2f\n",
                      laser_topic_.c_str(), people_topic_.c_str(),
                      odom_topic_.c_str(), max_obstacle_dist_, naive_goal_time_,
-                     people_velocity_);
+                     people_velocity_, forceFactorDesired, forceFactorObstacle,
+                     forceSigmaObstacle, forceFactorSocial, forceFactorGroupGaze,
+                     forceFactorGroupCoherence, forceFactorGroupRepulsion,
+                     lambda, gamma, n, nPrime, relaxationTime);
 
     // std::cout << std::endl
     //           << "SFM SENSOR INTERFACE:" << std::endl
@@ -155,6 +220,22 @@ struct InterfaceParams {
   std::string laser_topic_;
   std::string people_topic_;
   std::string odom_topic_;
+
+    // Social Force Model parameters
+  double forceFactorDesired;
+  double forceFactorObstacle;
+  double forceSigmaObstacle;
+  double forceFactorSocial;
+  double forceFactorGroupGaze;
+  double forceFactorGroupCoherence;
+  double forceFactorGroupRepulsion;
+  double lambda;
+  double gamma;
+  double n;
+  double nPrime;
+  double relaxationTime;
+  double epsilon;
+
 };
 
     class SFMSensorInterface {
@@ -190,6 +271,9 @@ struct InterfaceParams {
          * @param odom messages with the obstacles to be processed.
          */
         void odomCb(const nav_msgs::msg::Odometry::SharedPtr odom);
+
+
+        void loadParameters(size_t agent_index);
 
         /**
          * @brief  Tranform a coordinate vector from one frame to another

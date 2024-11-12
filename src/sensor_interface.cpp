@@ -41,9 +41,13 @@ SFMSensorInterface::SFMSensorInterface(
   agents_[0].cyclicGoals = false;
   agents_[0].teleoperated = true;
   agents_[0].groupId = -1;
+  loadParameters(0);
+  
+
+
   //agents_[0].id = 0;
 
-  //RCLCPP_FATAL(logger_, "Agents_ size: %ld and id: %d", agents_.size(), agents_[0].id);
+  RCLCPP_FATAL(logger_, "Agents_ size: %ld and id: %d", agents_.size(), agents_[0].id);
 
   std::chrono::duration<int> buffer_timeout(1);
 
@@ -429,7 +433,6 @@ void SFMSensorInterface::publish_obstacle_points(
  */
 void SFMSensorInterface::peopleCb(
   const people_msgs::msg::People::SharedPtr people) {
-
   if (!running_ || !odom_received_)
   return;
 
@@ -488,7 +491,8 @@ void SFMSensorInterface::peopleCb(
     velocity.x = people->people[i].velocity.x;
     velocity.y = people->people[i].velocity.y;
     velocity.z = 0.0;
-
+    
+    
     geometry_msgs::msg::Vector3 localV = SFMSensorInterface::transformVector(
       velocity, t, people->header.frame_id, iface_params_.controller_frame_);
 
@@ -516,13 +520,14 @@ void SFMSensorInterface::peopleCb(
     naiveGoal.radius = iface_params_.person_radius_;
     ag.goals.push_back(naiveGoal);
     ag.desiredVelocity = iface_params_.people_velocity_;
+
     agents.push_back(ag);
 
-     /* RCLCPP_ERROR(logger_,
+/*     RCLCPP_FATAL(logger_,
           "\tsfm::agent--id: %i, x: %.2f, y:%.2f, vx: %.2f, vy: %.2f, vz: %.2f",
           ag.id, ag.position.getX(), ag.position.getY(),
-          ag.velocity.getX(), ag.velocity.getY(), ag.angularVelocity);
-           */
+          ag.velocity.getX(), ag.velocity.getY(), ag.angularVelocity);  */
+           
   } 
 
   // Fill the obstacles of the agents
@@ -537,8 +542,10 @@ void SFMSensorInterface::peopleCb(
   agents_mutex_.lock();
   agents_.resize(people->people.size() + 1);
   agents_[0].obstacles1 = obs_points;
-  for (unsigned int i = 1; i < agents_.size(); i++)
+  for (unsigned int i = 1; i < agents_.size(); i++) {
   agents_[i] = agents[i - 1];
+  loadParameters(i);
+  }
   agents_mutex_.unlock();
 }
 
@@ -551,7 +558,6 @@ void SFMSensorInterface::odomCb(const nav_msgs::msg::Odometry::SharedPtr odom) {
   if (!running_)
     return;
 
-  RCLCPP_INFO_ONCE(logger_, "Odom received");
   odom_received_ = true;
   // last_odom_ = rclcpp::Time(odom->header.stamp);
   // if (odom->header.frame_id != odom_frame_) {
@@ -683,5 +689,28 @@ SFMSensorInterface::transformVector(geometry_msgs::msg::Vector3 &vector,
 
   return nextVector;
 }
+
+void SFMSensorInterface::loadParameters(size_t agent_index) {
+    if (agent_index >= agents_.size()) {
+        RCLCPP_ERROR(logger_, "Agent index out of bounds");
+        return;
+    }
+
+    sfm::Agent &agent = agents_[agent_index];
+    agent.params.forceFactorDesired = iface_params_.forceFactorDesired;
+    agent.params.forceFactorObstacle = iface_params_.forceFactorObstacle;
+    agent.params.forceSigmaObstacle = iface_params_.forceSigmaObstacle;
+    agent.params.forceFactorSocial = iface_params_.forceFactorSocial;
+    agent.params.forceFactorGroupGaze = iface_params_.forceFactorGroupGaze;
+    agent.params.forceFactorGroupCoherence = iface_params_.forceFactorGroupCoherence;
+    agent.params.forceFactorGroupRepulsion = iface_params_.forceFactorGroupRepulsion;
+    agent.params.lambda = iface_params_.lambda;
+    agent.params.gamma = iface_params_.gamma;
+    agent.params.n = iface_params_.n;
+    agent.params.nPrime = iface_params_.nPrime;
+    agent.params.epsilon = iface_params_.epsilon;
+    agent.params.relaxationTime = iface_params_.relaxationTime;
+}
+
 
 } // namespace social_force_window_planner
